@@ -1,14 +1,16 @@
+from typing import Dict
 from dotenv import load_dotenv
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 from langchain.schema.runnable import RunnableParallel, RunnableLambda
+from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 
 # Load environment variables from .env
 load_dotenv()
 
 # Create a ChatOpenAI model
-model = ChatOpenAI(model="gpt-4o")
+model = ChatGroq(model="llama3-70b-8192") 
 
 # Define prompt template
 prompt_template = ChatPromptTemplate.from_messages(
@@ -51,6 +53,11 @@ def analyze_cons(features):
 def combine_pros_cons(pros, cons):
     return f"Pros:\n{pros}\n\nCons:\n{cons}"
 
+def combine_pros_cons_from_dict(x: Dict[str, Dict[str, str]]) -> str:
+    return combine_pros_cons(x["branches"]["pros"], x["branches"]["cons"])
+
+combine_results = RunnableLambda(combine_pros_cons_from_dict)
+
 
 # Simplify branches with LCEL
 pros_branch_chain = (
@@ -67,8 +74,8 @@ chain = (
     | model
     | StrOutputParser()
     | RunnableParallel(branches={"pros": pros_branch_chain, "cons": cons_branch_chain})
-    | RunnableLambda(lambda x: combine_pros_cons(x["branches"]["pros"], x["branches"]["cons"]))
-)
+    | combine_results
+    )
 
 # Run the chain
 result = chain.invoke({"product_name": "MacBook Pro"})
