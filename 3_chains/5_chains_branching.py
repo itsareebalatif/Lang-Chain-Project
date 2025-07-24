@@ -1,92 +1,86 @@
+from typing import Dict, Any, cast
 from dotenv import load_dotenv
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
-from langchain.schema.runnable import RunnableBranch
-from langchain_openai import ChatOpenAI
+from langchain.schema.runnable import RunnableBranch, RunnableLambda
+from langchain_groq import ChatGroq
 
-# Load environment variables from .env
+# Load environment variables
 load_dotenv()
 
-# Create a ChatOpenAI model
-model = ChatOpenAI(model="gpt-4o")
+# Create model
+model = ChatGroq(model="llama3-70b-8192")
 
-# Define prompt templates for different feedback types
-positive_feedback_template = ChatPromptTemplate.from_messages(
-    [
-        ("system", "You are a helpful assistant."),
-        ("human",
-         "Generate a thank you note for this positive feedback: {feedback}."),
-    ]
-)
+# Define templates with clearer instructions
+positive_template = ChatPromptTemplate.from_messages([
+    ("system", "You are a customer service agent. Write a warm thank you response to positive feedback."),
+    ("human", "Feedback: {feedback}")
+])
 
-negative_feedback_template = ChatPromptTemplate.from_messages(
-    [
-        ("system", "You are a helpful assistant."),
-        ("human",
-         "Generate a response addressing this negative feedback: {feedback}."),
-    ]
-)
+negative_template = ChatPromptTemplate.from_messages([
+    ("system", "You are a customer service agent. Write a helpful response to address negative feedback. Offer solutions, not escalation."),
+    ("human", "Feedback: {feedback}")
+])
 
-neutral_feedback_template = ChatPromptTemplate.from_messages(
-    [
-        ("system", "You are a helpful assistant."),
-        (
-            "human",
-            "Generate a request for more details for this neutral feedback: {feedback}.",
-        ),
-    ]
-)
+neutral_template = ChatPromptTemplate.from_messages([
+    ("system", "You are a customer service agent. Politely ask for more details about neutral feedback."),
+    ("human", "Feedback: {feedback}")
+])
 
-escalate_feedback_template = ChatPromptTemplate.from_messages(
-    [
-        ("system", "You are a helpful assistant."),
-        (
-            "human",
-            "Generate a message to escalate this feedback to a human agent: {feedback}.",
-        ),
-    ]
-)
+escalate_template = ChatPromptTemplate.from_messages([
+    ("system", "You are a customer service agent. Create a message to escalate this case to a human."),
+    ("human", "Feedback: {feedback}")
+])
 
-# Define the feedback classification template
-classification_template = ChatPromptTemplate.from_messages(
-    [
-        ("system", "You are a helpful assistant."),
-        ("human",
-         "Classify the sentiment of this feedback as positive, negative, neutral, or escalate: {feedback}."),
-    ]
-)
+# More precise classification template
+classification_template = ChatPromptTemplate.from_messages([
+    ("system", """Classify this feedback EXACTLY as:
+- 'positive' if happy or satisfied
+- 'negative' if unhappy but doesn't request human
+- 'escalate' if specifically asks for manager/human
+- 'neutral' if neither positive nor negative
 
-# Define the runnable branches for handling feedback
+Return ONLY the classification word."""),
+    ("human", "{feedback}")
+])
+
+def classify_feedback(input_dict: Dict[str, Any]) -> Dict[str, Any]:
+    # Get classification
+    classification = (classification_template | model | StrOutputParser()).invoke(input_dict)
+    classification = classification.lower().strip()
+    
+    # Force negative classification unless explicit escalation
+    if "escalate" not in classification and "manager" not in input_dict["feedback"].lower():
+        if "terrible" in input_dict["feedback"].lower() or "broke" in input_dict["feedback"].lower():
+            classification = "negative"
+    
+    return {
+        "sentiment": classification,
+        "feedback": input_dict["feedback"]
+    }
+
+# Branch with explicit checks and type casting
 branches = RunnableBranch(
-    (
-        lambda x: "positive" in x,
-        positive_feedback_template | model | StrOutputParser()  # Positive feedback chain
-    ),
-    (
-        lambda x: "negative" in x,
-        negative_feedback_template | model | StrOutputParser()  # Negative feedback chain
-    ),
-    (
-        lambda x: "neutral" in x,
-        neutral_feedback_template | model | StrOutputParser()  # Neutral feedback chain
-    ),
-    escalate_feedback_template | model | StrOutputParser()
+    (lambda x: cast(Dict[str, Any], x)["sentiment"] == "positive", 
+     positive_template | model | StrOutputParser()),
+    
+    (lambda x: cast(Dict[str, Any], x)["sentiment"] == "negative", 
+     negative_template | model | StrOutputParser()),
+    
+    (lambda x: cast(Dict[str, Any], x)["sentiment"] == "neutral", 
+     neutral_template | model | StrOutputParser()),
+    
+    (escalate_template | model | StrOutputParser())
 )
 
-# Create the classification chain
-classification_chain = classification_template | model | StrOutputParser()
+# Final chain
+chain = (
+    RunnableLambda(classify_feedback)
+    | branches
+)
 
-# Combine classification and response generation into one chain
-chain = classification_chain | branches
-
-# Run the chain with an example review
-# Good review - "The product is excellent. I really enjoyed using it and found it very helpful."
-# Bad review - "The product is terrible. It broke after just one use and the quality is very poor."
-# Neutral review - "The product is okay. It works as expected but nothing exceptional."
-# Default - "I'm not sure about the product yet. Can you tell me more about its features and benefits?"
-
-review = "The product is terrible. It broke after just one use and the quality is very poor."
+# Test with negative feedback
+review = "The product is very good .i like it "
 result = chain.invoke({"feedback": review})
-
-# Output the result
+print("Customer Service Response:")
 print(result)
