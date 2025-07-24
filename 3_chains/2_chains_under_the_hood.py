@@ -1,13 +1,16 @@
 from dotenv import load_dotenv
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema.runnable import RunnableLambda, RunnableSequence
+from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 
 # Load environment variables from .env
 load_dotenv()
 
 # Create a ChatOpenAI model
-model = ChatOpenAI(model="gpt-4")
+
+
+model = ChatGroq(model="llama3-70b-8192") 
 
 # Define prompt templates
 prompt_template = ChatPromptTemplate.from_messages(
